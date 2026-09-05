@@ -288,6 +288,8 @@ class Sniffer:
         iface = self.cfg["interface"] or None
         log(f"слушаю UDP-порт {port}" + (f" на {iface}" if iface else " (все интерфейсы)"))
 
+        seen = {"n": 0}
+
         def handle(pkt):
             if UDP not in pkt:
                 return
@@ -295,14 +297,21 @@ class Sniffer:
             if udp.sport != port and udp.dport != port:
                 return
             payload = bytes(udp.payload)
-            if payload:
-                try:
-                    self.parser.HandlePayload(payload)
-                except Exception:
-                    pass  # битые/чужие пакеты игнорируем молча
+            if not payload:
+                return
+            seen["n"] += 1
+            if seen["n"] == 1:
+                log("пошёл игровой трафик, разбираю сделки")
+            try:
+                self.parser.HandlePayload(payload)
+            except Exception:
+                pass  # битые/чужие пакеты игнорируем молча
 
+        # ВАЖНО: без BPF-фильтра (filter=...). На Windows при захвате с
+        # конкретного \Device\NPF_ фильтр ядра молча отсекает весь трафик —
+        # именно из-за него агент раньше ловил ноль, хотя Wireshark всё видел.
+        # Порт проверяем сами в handle() — это надёжнее.
         sniff(
-            filter=f"udp port {port}",
             prn=handle,
             store=False,
             iface=iface,
@@ -379,6 +388,47 @@ def list_interfaces():
         print("  ", name)
 
 
+def sniff_test(cfg, seconds=20):
+    """
+    Диагностика захвата. Ловит ЛЮБЫЕ пакеты на выбранной карте (не только
+    игровые) и отдельно считает пакеты на порту 5056. Разделяет две причины
+    тишины: карта вообще ничего не отдаёт против «трафик есть, но не 5056».
+    """
+    from scapy.all import sniff, IP, UDP, TCP
+    iface = cfg["interface"] or None
+    port = cfg["game_port"]
+    log(f"тест захвата на {iface or 'всех интерфейсах'}, {seconds} сек. "
+        f"Походите в игре и поторгуйте.")
+
+    stats = {"all": 0, "udp": 0, "game": 0}
+    seen_ports = {}
+
+    def handle(pkt):
+        stats["all"] += 1
+        if UDP in pkt:
+            stats["udp"] += 1
+            sp, dp = pkt[UDP].sport, pkt[UDP].dport
+            if sp == port or dp == port:
+                stats["game"] += 1
+            for p in (sp, dp):
+                seen_ports[p] = seen_ports.get(p, 0) + 1
+
+    sniff(prn=handle, store=False, iface=iface, timeout=seconds)
+
+    log(f"итого пакетов: {stats['all']}, из них UDP: {stats['udp']}, "
+        f"на порту {port}: {stats['game']}")
+    if stats["all"] == 0:
+        log("НИ ОДНОГО пакета — карта не отдаёт трафик. Причина в Npcap или "
+            "выбрана не та карта (проверьте VPN и --list-ifaces).", "warn")
+    elif stats["game"] == 0:
+        top = sorted(seen_ports.items(), key=lambda x: -x[1])[:8]
+        ports = ", ".join(f"{p}:{c}" for p, c in top)
+        log(f"трафик есть, но на порту {port} пусто. Активные UDP-порты: {ports}", "warn")
+        log("если игра идёт через другой порт — впишите его в game_port.", "warn")
+    else:
+        log("захват работает: игровые пакеты идут. Можно запускать --discover.")
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -387,6 +437,8 @@ def main():
                     help="печатать все коды и параметры — для поиска актуальных кодов после патча")
     ap.add_argument("--list-ifaces", action="store_true",
                     help="показать сетевые интерфейсы и выйти")
+    ap.add_argument("--sniff-test", action="store_true",
+                    help="проверить захват: ловит любые пакеты и считает игровые")
     ap.add_argument("--no-tray", action="store_true", help="без иконки в трее")
     args = ap.parse_args()
 
@@ -395,6 +447,10 @@ def main():
         return
 
     cfg = load_config()
+
+    if args.sniff_test:
+        sniff_test(cfg)
+        return
 
     if not args.discover and not verify_token(cfg):
         sys.exit(2)
