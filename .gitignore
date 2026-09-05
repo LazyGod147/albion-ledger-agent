@@ -1,0 +1,17 @@
+# локальные настройки — в репозиторий не попадают
+config.json
+sniffer_config.json
+
+# сборка
+build/
+dist/
+__pycache__/
+*.pyc
+
+# рабочие папки
+processed/
+inbox/*
+!inbox/README.txt
+
+.DS_Store
+*.log

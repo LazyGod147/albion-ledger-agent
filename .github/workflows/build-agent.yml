@@ -1,0 +1,48 @@
+name: build-agent
+
+# Версия для репозитория, где лежит ТОЛЬКО агент (файлы в корне, без папки
+# agent/). Собирает снифер в .exe на Windows-раннере и прикладывает к релизу.
+#   1. Автоматически — при отправке тега вида v1.0, v1.1.
+#   2. Вручную — кнопкой "Run workflow" на вкладке Actions.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Забрать код
+        uses: actions/checkout@v4
+
+      - name: Поставить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Установить зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Собрать exe
+        run: pyinstaller --clean --noconfirm sniffer_agent.spec
+
+      - name: Приложить exe к сборке
+        uses: actions/upload-artifact@v4
+        with:
+          name: albion-ledger-agent
+          path: dist/albion-ledger-agent.exe
+
+      - name: Опубликовать релиз (только для тегов)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/albion-ledger-agent.exe
+          fail_on_unmatched_files: true

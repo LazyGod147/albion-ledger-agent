@@ -1,0 +1,30 @@
+{
+  "site_url": "https://ваш-домен.ru",
+  "token": "agent_ВСТАВЬТЕ_ТОКЕН_ИЗ_НАСТРОЕК",
+  "character": "",
+  "server": "europe",
+
+  "game_port": 5056,
+  "interface": "",
+
+  "batch_size": 50,
+  "flush_seconds": 10,
+
+  "operation_codes": {
+    "auction_buy_offer": 82,
+    "auction_sell_offer": 81,
+    "auction_get_finished": 84,
+    "read_mail": 121
+  },
+  "event_codes": {
+    "new_mail": 3
+  },
+  "field_map": {
+    "item_id": 0,
+    "quantity": 1,
+    "unit_price": 2,
+    "tax": 3
+  },
+
+  "verify_tls": true
+}

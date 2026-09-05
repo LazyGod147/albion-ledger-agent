@@ -1,0 +1,10 @@
+{
+  "api_url": "https://ваш-домен.ru/api.php",
+  "token": "agent_ВСТАВЬТЕ_ТОКЕН_ИЗ_НАСТРОЕК",
+  "watch_dir": "inbox",
+  "processed_dir": "processed",
+  "character": "ИмяПерсонажа",
+  "server": "europe",
+  "batch_size": 200,
+  "poll_seconds": 20
+}
