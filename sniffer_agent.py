@@ -16,7 +16,7 @@ Albion Ledger — снифер-агент.
 ВАЖНО про коды. operation_codes/event_codes в конфиге меняются почти каждый
 патч игры. Если после обновления сделки перестали ловиться — запустите
 `python sniffer_agent.py --discover`, проведите одну сделку в игре, посмотрите,
-под каким кодом пришли данные, и впишите его в config.json. Это единственное,
+под каким кодом пришли данные, и впишите его в sniffer_config.json. Это единственное,
 что требует ручной поддержки; всё остальное патчей не боится.
 
 Зависит от Npcap (тот же, что ставили для прошлой программы) и трёх пакетов:
@@ -37,7 +37,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).with_name("config.json")
+# Конфиг лежит рядом с программой. Для собранного .exe это папка самого exe
+# (sys.executable), а не временная папка распаковки PyInstaller — иначе файл
+# терялся бы при каждом закрытии. Для запуска из исходника — папка скрипта.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).parent
+else:
+    BASE_DIR = Path(__file__).parent
+CONFIG_PATH = BASE_DIR / "sniffer_config.json"
 
 
 # ---------------------------------------------------------------- конфиг
@@ -174,7 +181,7 @@ class Uploader:
                     last = time.time()
                 elif r.status_code == 401:
                     log("сайт вернул 401 — токен неверный или отозван. "
-                        "Проверьте config.json.", "error")
+                        "Проверьте sniffer_config.json.", "error")
                     time.sleep(30)
                 else:
                     log(f"сайт ответил {r.status_code}, повтор позже", "warn")
@@ -367,7 +374,7 @@ def run_tray(stopper):
 
 def list_interfaces():
     from scapy.all import get_if_list
-    print("Доступные интерфейсы (впишите нужный в config.json → interface):")
+    print("Доступные интерфейсы (впишите нужный в sniffer_config.json → interface):")
     for name in get_if_list():
         print("  ", name)
 
