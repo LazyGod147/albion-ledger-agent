@@ -270,12 +270,57 @@ class TradeExtractor:
 
 # ---------------------------------------------------------------- захват трафика
 
+def _patch_parser_routing():
+    """
+    В библиотеке photon-packet-parser есть ошибка: ответ операции
+    (OperationResponse) отправляется в on_request вместо on_response.
+    Именно как ответ операции приходят покупки и продажи, поэтому без этой
+    заплатки сделки уходят не в тот обработчик. Чиним метод на месте.
+    """
+    import io
+    from photon_packet_parser.photon_packet_parser import PhotonPacketParser
+    from photon_packet_parser.message_type import MessageType
+    from photon_packet_parser.protocol16_deserializer import Protocol16Deserializer
+    from photon_packet_parser.byte_reader import ByteReader
+
+    def HandleSendReliable(self, source, command_length):
+        source.read(1)
+        command_length -= 1
+        message_type = ByteReader.read_byte(source)[0]
+        command_length -= 1
+        payload = io.BytesIO(source.read(command_length))
+        if message_type == MessageType.OperationRequest.value:
+            self.on_request(Protocol16Deserializer.deserialize_operation_request(payload))
+        elif message_type == MessageType.OperationResponse.value:
+            self.on_response(Protocol16Deserializer.deserialize_operation_response(payload))
+        elif message_type == MessageType.Event.value:
+            self.on_event(Protocol16Deserializer.deserialize_event_data(payload))
+
+    PhotonPacketParser.HandleSendReliable = HandleSendReliable
+
+
 class Sniffer:
-    def __init__(self, cfg, extractor):
+    def __init__(self, cfg, extractor, discover=False):
         self.cfg = cfg
+        self.discover = discover
+        _patch_parser_routing()
         from photon_packet_parser import PhotonPacketParser
+        # счётчики для диагностики
+        self.stats = {"packets": 0, "events": 0, "requests": 0,
+                      "responses": 0, "errors": 0}
+        self._first_error = None
+
+        # оборачиваем колбэки счётчиками, не теряя разбор ошибок
+        def wrap(kind, fn):
+            def inner(x):
+                self.stats[kind] += 1
+                fn(x)
+            return inner
+
         self.parser = PhotonPacketParser(
-            extractor.on_event, extractor.on_request, extractor.on_response
+            wrap("events", extractor.on_event),
+            wrap("requests", extractor.on_request),
+            wrap("responses", extractor.on_response),
         )
         self._stop = threading.Event()
 
@@ -288,7 +333,19 @@ class Sniffer:
         iface = self.cfg["interface"] or None
         log(f"слушаю UDP-порт {port}" + (f" на {iface}" if iface else " (все интерфейсы)"))
 
-        seen = {"n": 0}
+        # heartbeat: раз в 5 сек печатаем счётчики, чтобы было видно, что живо
+        def heartbeat():
+            while not self._stop.wait(5):
+                s = self.stats
+                log(f"счётчики — пакетов: {s['packets']}, событий: {s['events']}, "
+                    f"запросов: {s['requests']}, ответов: {s['responses']}, "
+                    f"ошибок парсера: {s['errors']}")
+                if self._first_error and self.discover:
+                    log(f"первая ошибка парсера: {self._first_error}", "warn")
+                    self._first_error = None  # печатаем один раз
+        threading.Thread(target=heartbeat, daemon=True).start()
+
+        first = {"seen": False}
 
         def handle(pkt):
             if UDP not in pkt:
@@ -299,13 +356,17 @@ class Sniffer:
             payload = bytes(udp.payload)
             if not payload:
                 return
-            seen["n"] += 1
-            if seen["n"] == 1:
-                log("пошёл игровой трафик, разбираю сделки")
+            self.stats["packets"] += 1
+            if not first["seen"]:
+                first["seen"] = True
+                log("пошёл игровой трафик, разбираю пакеты")
             try:
                 self.parser.HandlePayload(payload)
-            except Exception:
-                pass  # битые/чужие пакеты игнорируем молча
+            except Exception as e:
+                self.stats["errors"] += 1
+                if self._first_error is None:
+                    import traceback
+                    self._first_error = f"{e.__class__.__name__}: {e}"
 
         # ВАЖНО: без BPF-фильтра (filter=...). На Windows при захвате с
         # конкретного \Device\NPF_ фильтр ядра молча отсекает весь трафик —
@@ -317,6 +378,7 @@ class Sniffer:
             iface=iface,
             stop_filter=lambda _: self._stop.is_set(),
         )
+
 
 
 # ---------------------------------------------------------------- проверка токена
@@ -460,7 +522,7 @@ def main():
         up.start()
 
     extractor = TradeExtractor(cfg, up, discover=args.discover)
-    sniffer = Sniffer(cfg, extractor)
+    sniffer = Sniffer(cfg, extractor, discover=args.discover)
 
     stopping = threading.Event()
 
